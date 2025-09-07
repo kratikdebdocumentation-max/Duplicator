@@ -1,0 +1,52 @@
+# Duplicator Trading Bot Configuration
+
+# Telegram Bot Configuration
+telegram:
+  bot_token: "7868281454:AAFnGFDc9PVqV3tewRLFqwb-YBa7iLuwEyI"
+  chat_id: "-1002786036906"
+  sos_chat_id: "-1003090073598"
+
+# Trading Configuration
+trading:
+  default_exchange: "NFO"
+  default_price_type: "LMT"
+  default_retention: "DAY"
+  default_order_type: "MIS"  # MIS or CNC - user preference from memory
+  lot_multipliers:
+    NIFTY: 25
+    BANKNIFTY: 15
+    SENSEX: 10
+
+# Broker Configuration
+brokers:
+  broker1:
+    name: "Shoonya Broker 1"
+    enabled: true
+    credentials_file: "credentials1.json"
+    api_type: "shoonya"
+    
+  broker2:
+    name: "Shoonya Broker 2"
+    enabled: false  # Temporarily disabled due to blocked credentials
+    credentials_file: "credentials2.json"
+    api_type: "shoonya"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  log_dir: "logs"
+  max_file_size: "10MB"
+  backup_count: 5
+
+# WebSocket Configuration
+websocket:
+  reconnect_attempts: 5
+  reconnect_delay: 5
+  heartbeat_interval: 30
+
+# Order Management
+orders:
+  max_retry_attempts: 3
+  retry_delay: 2
+  order_timeout: 30
+  enable_duplication: true
