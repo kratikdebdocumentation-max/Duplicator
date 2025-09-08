@@ -50,3 +50,4 @@ orders:
   retry_delay: 2
   order_timeout: 30
   enable_duplication: true
+  testing_mode: true  # Skip REJECTED notifications during testing

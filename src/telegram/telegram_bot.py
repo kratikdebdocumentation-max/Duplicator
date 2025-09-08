@@ -486,6 +486,8 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("status", self.status_command))
         self.application.add_handler(CommandHandler("orders", self.orders_command))
         self.application.add_handler(CommandHandler("positions", self.positions_command))
+        self.application.add_handler(CommandHandler("trades", self.trades_command))
+        self.application.add_handler(CommandHandler("m", self.modify_command))
         self.application.add_handler(CommandHandler("buy", self.buy_command))
         self.application.add_handler(CommandHandler("sell", self.sell_command))
         self.application.add_handler(CommandHandler("cancel", self.cancel_command))
@@ -544,6 +546,8 @@ Welcome! I can help you place and manage orders across multiple brokers.
 • `/status` - System and broker status
 • `/orders` - List all active orders
 • `/positions` - Current positions summary
+• `/trades` - View active trades with current PnL
+• `/m` - Modify active trades (SL, Target, Exit)
 • `/brokers` - Individual broker status
 
 *Order Format Examples:*
@@ -808,6 +812,136 @@ Welcome! I can help you place and manage orders across multiple brokers.
             self.logger.error(f"Error in brokers command: {e}")
             await update.message.reply_text(f"❌ Error getting broker status: {str(e)}")
     
+    async def trades_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /trades command to show active trades with current PnL"""
+        try:
+            # Get active orders from order manager
+            active_orders = self.order_manager.get_active_orders()
+            
+            if not active_orders:
+                await update.message.reply_text("📊 No active trades found.")
+                return
+            
+            # Calculate total current PnL
+            total_current_pnl = 0
+            valid_trades = 0
+            
+            trades_msg = "📊 **Active Trades with Current PnL**\n\n"
+            
+            for order in active_orders:
+                try:
+                    # Get current price from broker
+                    symbol = order['symbol']
+                    broker = self.broker_manager.get_broker('broker1')
+                    
+                    if broker and hasattr(broker, 'get_ltp'):
+                        # Try to get current price
+                        current_price = broker.get_ltp(symbol)
+                        if current_price:
+                            current_price = float(current_price)
+                        else:
+                            current_price = order['price']  # Use order price as fallback
+                    else:
+                        current_price = order['price']  # Use order price as fallback
+                    
+                    # Calculate PnL
+                    entry_price = float(order['price'])
+                    qty = int(order['quantity'])
+                    
+                    # Simple PnL calculation (assuming all orders are buy orders for now)
+                    current_pnl = (current_price - entry_price) * qty
+                    current_pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                    
+                    total_current_pnl += current_pnl
+                    valid_trades += 1
+                    
+                    # Format PnL with color emoji
+                    pnl_emoji = "📈" if current_pnl >= 0 else "📉"
+                    pnl_color = "🟢" if current_pnl >= 0 else "🔴"
+                    
+                    trades_msg += (
+                        f"{pnl_color} **{symbol}**\n"
+                        f"🆔 Order: `{order['order_id']}`\n"
+                        f"💰 Entry: ₹{entry_price:.2f}\n"
+                        f"📊 Current: ₹{current_price:.2f}\n"
+                        f"📦 Qty: {qty}\n"
+                        f"{pnl_emoji} PnL: ₹{current_pnl:.2f} ({current_pnl_pct:.2f}%)\n"
+                        f"⏰ Time: {order['created_at'][:19]}\n"
+                        f"📊 Status: {order['status']}\n\n"
+                    )
+                    
+                except Exception as e:
+                    self.logger.error(f"Error calculating PnL for {order['symbol']}: {e}")
+                    # Add trade without PnL calculation
+                    trades_msg += (
+                        f"⚠️ **{order['symbol']}**\n"
+                        f"🆔 Order: `{order['order_id']}`\n"
+                        f"💰 Entry: ₹{order['price']}\n"
+                        f"📦 Qty: {order['quantity']}\n"
+                        f"❌ PnL: Unable to calculate\n"
+                        f"⏰ Time: {order['created_at'][:19]}\n"
+                        f"📊 Status: {order['status']}\n\n"
+                    )
+            
+            # Add summary
+            if valid_trades > 0:
+                total_emoji = "📈" if total_current_pnl >= 0 else "📉"
+                trades_msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                trades_msg += f"{total_emoji} **Total Current PnL: ₹{total_current_pnl:.2f}**\n"
+                trades_msg += f"📊 **Active Trades: {len(active_orders)}**"
+            else:
+                trades_msg += f"⚠️ **Unable to calculate PnL for any trades**"
+            
+            await update.message.reply_text(trades_msg, parse_mode='Markdown')
+            
+        except Exception as e:
+            self.logger.error(f"Error in trades command: {e}")
+            await update.message.reply_text(f"❌ Error getting trades: {str(e)}")
+    
+    async def modify_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /m command for trade management and modification"""
+        try:
+            # Get active orders from order manager
+            active_orders = self.order_manager.get_active_orders()
+            
+            if not active_orders:
+                await update.message.reply_text("📊 No active trades found to modify.")
+                return
+            
+            # Create trade selection keyboard
+            trades_list = {}
+            keyboard = []
+            
+            for order in active_orders:
+                # Create display name for trade
+                display_name = f"{order['symbol']} | Entry: ₹{order['price']} | Qty: {order['quantity']} | Status: {order['status']}"
+                trades_list[display_name] = order['order_id']
+                keyboard.append([display_name])
+            
+            # Add back button
+            keyboard.append(["❌ Cancel"])
+            
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            
+            # Store trades list in user context for later reference
+            user_id = update.effective_user.id
+            if not hasattr(self, 'user_context'):
+                self.user_context = {}
+            if user_id not in self.user_context:
+                self.user_context[user_id] = {}
+            
+            self.user_context[user_id]['trades_list'] = trades_list
+            self.user_context[user_id]['in_modify_mode'] = True
+            
+            await update.message.reply_text(
+                "📊 Select a trade to modify:",
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error in modify command: {e}")
+            await update.message.reply_text(f"❌ Error getting trades for modification: {str(e)}")
+    
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle button callbacks"""
         query = update.callback_query
@@ -866,6 +1000,12 @@ Welcome! I can help you place and manage orders across multiple brokers.
         elif "Place Limit Order" in message_text or "Place Market Order" in message_text:
             # Handle order type selection
             await self._handle_order_type_selection(update, message_text)
+        elif self._is_limit_price_input(update):
+            # Handle limit price input
+            await self._handle_limit_price_input(update, message_text)
+        elif self._is_quantity_input(update):
+            # Handle quantity input
+            await self._handle_quantity_input(update, message_text)
         elif message_text == "❓ Help":
             await self._show_help_text(update)
         elif message_text == "📊 Status":
@@ -876,6 +1016,15 @@ Welcome! I can help you place and manage orders across multiple brokers.
             await self._show_positions_text(update)
         elif message_text == "🏦 Brokers":
             await self._show_brokers_text(update)
+        elif self._is_trade_selection(update):
+            # Handle trade selection for modification
+            await self._handle_trade_selection(update, message_text)
+        elif self._is_modify_option_selection(update):
+            # Handle modify option selection
+            await self._handle_modify_option_selection(update, message_text)
+        elif message_text == "❌ Cancel":
+            # Handle cancel in modify mode
+            await self._handle_modify_cancel(update)
         # Check if it's a quick order format
         elif re.match(r'^[A-Z]+\d+[A-Z]+\d+[A-Z]+\d+\s+\d+\s+\d+\.?\d*$', message_text):
             parts = message_text.split()
@@ -1481,6 +1630,44 @@ Select a strike price:
             self.logger.error(f"Error getting token for {trading_symbol}: {e}")
             return None
 
+    def get_lot_size_from_symbol(self, trading_symbol: str) -> int:
+        """Get lot size from trading symbol using the symbol files"""
+        try:
+            # Load BFO symbols for SENSEX
+            if "SENSEX" in trading_symbol:
+                # Convert the trading symbol to BFO format for lookup
+                bfo_trading_symbol = self.convert_sensex_format(trading_symbol)
+                
+                bfo_file = f"data/BFO_symbols.txt_{datetime.today().strftime('%Y-%m-%d')}.txt"
+                if os.path.exists(bfo_file):
+                    with open(bfo_file, 'r', encoding='utf-8') as file:
+                        for line in file:
+                            values = line.strip().split(',')
+                            if len(values) > 4 and values[4] == bfo_trading_symbol:
+                                return int(values[2])  # Lot size is in column 2
+                return 25  # Default lot size for SENSEX
+            else:
+                # Load NFO symbols for NIFTY and BANK NIFTY
+                nfo_file = f"data/NFO_symbols.txt_{datetime.today().strftime('%Y-%m-%d')}.txt"
+                if os.path.exists(nfo_file):
+                    with open(nfo_file, 'r', encoding='utf-8') as file:
+                        for line in file:
+                            values = line.strip().split(',')
+                            if len(values) > 4 and values[4] == trading_symbol:
+                                return int(values[2])  # Lot size is in column 2
+                return 25  # Default lot size for NIFTY/BANK NIFTY
+        except Exception as e:
+            self.logger.error(f"Error getting lot size for {trading_symbol}: {e}")
+            return 25  # Default lot size
+
+    def _generate_quantity_options(self, lot_size: int) -> list:
+        """Generate quantity options as multiples of lot size"""
+        # Fixed quantity options: [20, 40, 60, 80, 100, 200]
+        quantities = [20, 40, 60, 80, 100, 200]
+        
+        self.logger.info(f"Generated quantity options: {quantities}")
+        return quantities
+
     def subscribe_to_websocket(self, trading_symbol: str, token: str) -> bool:
         """Subscribe to websocket feed for the given symbol"""
         try:
@@ -1610,15 +1797,21 @@ Select a strike price:
             
             return symbol
         elif instrument.lower() == "nifty":
-            # Format: NIFTY26JUN29C39000 (NIFTY + Date + C/P + Strike)
-            # Convert CE/PE to C/P
+            # Format: NIFTY25SEP11C25000 (NIFTY + YYMMMDD + C/P + Strike)
+            # Convert expiry_code from "11SEP25" to "25SEP11"
+            day = expiry_code[:2]
+            month = expiry_code[2:5]
+            year = expiry_code[5:]
             option_char = "C" if option_type == "CE" else "P"
-            return f"NIFTY{expiry_code}{option_char}{strike:05d}"
+            return f"NIFTY{year}{month}{day}{option_char}{strike:05d}"
         elif instrument.lower() == "banknifty":
-            # Format: BANKNIFTY30SEP25C73500 (BANKNIFTY + Date + C/P + Strike)
-            # Convert CE/PE to C/P
+            # Format: BANKNIFTY25SEP30C73500 (BANKNIFTY + YYMMMDD + C/P + Strike)
+            # Convert expiry_code from "30SEP25" to "25SEP30"
+            day = expiry_code[:2]
+            month = expiry_code[2:5]
+            year = expiry_code[5:]
             option_char = "C" if option_type == "CE" else "P"
-            return f"BANKNIFTY{expiry_code}{option_char}{strike:05d}"
+            return f"BANKNIFTY{year}{month}{day}{option_char}{strike:05d}"
         else:
             raise ValueError(f"Unsupported instrument: {instrument}")
 
@@ -1666,12 +1859,16 @@ Select a strike price:
         user_data['selected_option_type'] = option_type
         user_data['option_symbol'] = option_symbol
         
-        # Get token for websocket subscription
+        # Get token and lot size for websocket subscription
         token = self.get_token_from_symbol(option_symbol)
+        lot_size = self.get_lot_size_from_symbol(option_symbol)
+        
         if token:
             # Subscribe to websocket for real-time updates
             self.subscribe_to_websocket(option_symbol, token)
             user_data['option_token'] = token
+            user_data['lot_size'] = lot_size
+            self.logger.info(f"Lot size for {option_symbol}: {lot_size}")
             
             # Set up callback to get initial LTP from websocket
             initial_ltp = None
@@ -1744,25 +1941,35 @@ Select a strike price:
         await self.start_ltp_updates(user_id, option_symbol, instrument_display, strike_price, option_type, expiry_code)
 
     def get_option_ltp(self, option_symbol: str) -> float:
-        """Get current LTP for option symbol from broker"""
+        """Get current LTP for option symbol from broker using get_quotes API"""
         try:
             broker = self.broker_manager.get_broker('broker1')
-            if broker and hasattr(broker, 'get_ltp'):
-                # First try to get token from symbol files
+            if broker and hasattr(broker, 'api'):
+                # Get token from symbol files
                 token = self.get_token_from_symbol(option_symbol)
-                if token:
-                    # Use token for LTP fetch
-                    current_price = broker.get_ltp(token)
-                    if current_price:
-                        return float(current_price)
+                if not token:
+                    raise Exception(f"Could not find token for {option_symbol}")
+                
+                # Determine exchange based on symbol
+                if "SENSEX" in option_symbol:
+                    exchange = "BFO"
                 else:
-                    # Fallback to using symbol directly
-                    current_price = broker.get_ltp(option_symbol)
-                    if current_price:
-                        return float(current_price)
+                    exchange = "NFO"
+                
+                # Use get_quotes API with exchange and token
+                self.logger.info(f"Getting quotes for exchange={exchange}, token={token}")
+                ret = broker.api.get_quotes(exchange=exchange, token=token)
+                
+                if ret and ret.get('stat') == 'Ok' and 'lp' in ret:
+                    ltp = float(ret['lp'])
+                    self.logger.info(f"Got LTP from get_quotes: {ltp}")
+                    return ltp
+                else:
+                    self.logger.error(f"Invalid response from get_quotes: {ret}")
+                    raise Exception(f"Invalid response from get_quotes API")
             
-            # Throw error if API fails
-            raise Exception(f"Could not fetch LTP for {option_symbol} from broker API")
+            # Throw error if broker not available
+            raise Exception(f"Broker not available for LTP fetch")
             
         except Exception as e:
             self.logger.error(f"Error getting LTP for {option_symbol}: {e}")
@@ -1819,6 +2026,212 @@ Select a strike price:
         except Exception as e:
             self.logger.error(f"Error in LTP updates: {e}")
 
+    def _is_limit_price_input(self, update: Update) -> bool:
+        """Check if the message is a limit price input"""
+        user_id = update.effective_user.id
+        if not hasattr(self, 'user_context') or user_id not in self.user_context:
+            return False
+        
+        user_data = self.user_context[user_id]
+        order_type = user_data.get('order_type')
+        limit_price = user_data.get('limit_price')
+        
+        # Check if user is in limit order flow, message is a number, and no limit price set yet
+        if order_type == "LIMIT" and limit_price is None:
+            try:
+                float(update.message.text)
+                return True
+            except ValueError:
+                return False
+        
+        return False
+
+    def _is_quantity_input(self, update: Update) -> bool:
+        """Check if the message is a quantity input"""
+        user_id = update.effective_user.id
+        if not hasattr(self, 'user_context') or user_id not in self.user_context:
+            return False
+        
+        user_data = self.user_context[user_id]
+        order_type = user_data.get('order_type')
+        limit_price = user_data.get('limit_price')
+        
+        # Check if user is in order flow
+        if order_type:
+            # For limit orders: check if limit price has been set
+            if order_type == "LIMIT" and limit_price is not None:
+                try:
+                    int(update.message.text)
+                    return True
+                except ValueError:
+                    return False
+            # For market orders: any number input after order type selection
+            elif order_type == "MARKET":
+                try:
+                    int(update.message.text)
+                    return True
+                except ValueError:
+                    return False
+        
+        return False
+
+    async def _handle_limit_price_input(self, update: Update, message_text: str) -> None:
+        """Handle limit price input"""
+        user_id = update.effective_user.id
+        user_data = self.user_context[user_id]
+        
+        try:
+            limit_price = float(message_text)
+            
+            # Store limit price in context
+            user_data['limit_price'] = limit_price
+            
+            # Get option symbol and other details
+            option_symbol = user_data.get('option_symbol')
+            
+            # Get current LTP from broker API for confirmation
+            try:
+                current_ltp = self.get_option_ltp(option_symbol)
+                self.logger.info(f"Got current LTP for confirmation: {current_ltp}")
+            except Exception as e:
+                self.logger.warning(f"Could not get LTP for confirmation: {e}")
+                current_ltp = 0  # Use 0 as fallback to show "Not available"
+            
+            # Show confirmation message
+            selected_strike = user_data.get('selected_strike')
+            selected_option_type = user_data.get('selected_option_type')
+            instrument = user_data.get('instrument', 'sensex')
+            
+            instrument_names = {
+                "nifty": "NIFTY",
+                "banknifty": "BANK NIFTY", 
+                "sensex": "SENSEX"
+            }
+            instrument_display = instrument_names.get(instrument, instrument.upper())
+            
+            message = f"""
+📊 *Limit Order Confirmation*
+
+*Symbol:* `{option_symbol}`
+*Instrument:* {instrument_display}
+*Strike:* {selected_strike:,} {selected_option_type}
+*Your Limit Price:* ₹{limit_price:,.2f}
+
+Please select quantity:
+            """
+            
+            # Get lot size and generate quantity options
+            lot_size = user_data.get('lot_size', 25)
+            quantity_options = self._generate_quantity_options(lot_size)
+            
+            # Create quantity selection keyboard
+            quantity_keyboard = []
+            for i in range(0, len(quantity_options), 3):
+                row = [KeyboardButton(str(qty)) for qty in quantity_options[i:i+3]]
+                quantity_keyboard.append(row)
+            
+            quantity_keyboard.append([KeyboardButton("🔙 Back to Instruments")])
+            reply_markup = ReplyKeyboardMarkup(quantity_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            
+            await update.message.reply_text(
+                message,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            
+        except ValueError:
+            await update.message.reply_text("❌ Please enter a valid price number (e.g., 150.50 or 150)")
+
+    async def _handle_quantity_input(self, update: Update, message_text: str) -> None:
+        """Handle quantity input and place order"""
+        user_id = update.effective_user.id
+        user_data = self.user_context[user_id]
+        
+        try:
+            quantity = int(message_text)
+            
+            # Get order details
+            option_symbol = user_data.get('option_symbol')
+            limit_price = user_data.get('limit_price')
+            order_type = user_data.get('order_type')
+            instrument = user_data.get('instrument', 'sensex')
+            
+            # Determine exchange
+            if "SENSEX" in option_symbol:
+                exchange = "BFO"
+            else:
+                exchange = "NFO"
+            
+            # Place order using Shoonya API
+            broker = self.broker_manager.get_broker('broker1')
+            if broker and hasattr(broker, 'api'):
+                try:
+                    # Determine price type and price based on order type
+                    if order_type == "LIMIT":
+                        price_type = 'LMT'  # Limit order
+                        price = limit_price
+                        order_type_display = "Limit Order"
+                    else:  # MARKET order
+                        price_type = 'MKT'  # Market order
+                        price = 0  # Market orders don't have a specific price
+                        order_type_display = "Market Order"
+                    
+                    # Place order
+                    order_result = broker.api.place_order(
+                        buy_or_sell='B',  # Buy order
+                        product_type='C',  # CNC (Cash and Carry)
+                        exchange=exchange,
+                        tradingsymbol=option_symbol,
+                        quantity=quantity,
+                        discloseqty=0,
+                        price_type=price_type,
+                        price=price,
+                        trigger_price=None,
+                        retention='DAY',
+                        remarks=f'telegram_order_{user_id}'
+                    )
+                    
+                    if order_result and order_result.get('stat') == 'Ok':
+                        order_no = order_result.get('norenordno', 'Unknown')
+                        
+                        # Create appropriate message based on order type
+                        if order_type == "LIMIT":
+                            price_info = f"*Price:* ₹{limit_price:,.2f}\n*Type:* {order_type_display}\n\nOrder has been placed and will be executed when market price reaches your limit price."
+                        else:  # MARKET order
+                            price_info = f"*Type:* {order_type_display}\n\nOrder has been placed and will be executed at the current market price."
+                        
+                        message = f"""
+✅ *Order Placed Successfully!*
+
+*Order Number:* {order_no}
+*Symbol:* `{option_symbol}`
+*Quantity:* {quantity}
+{price_info}
+*Exchange:* {exchange}
+                        """
+                        
+                        await update.message.reply_text(
+                            message,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                        
+                        # Clear user context
+                        if user_id in self.user_context:
+                            del self.user_context[user_id]
+                            
+                    else:
+                        error_msg = order_result.get('emsg', 'Unknown error') if order_result else 'No response from broker'
+                        await update.message.reply_text(f"❌ Order failed: {error_msg}")
+                        
+                except Exception as e:
+                    self.logger.error(f"Error placing order: {e}")
+                    await update.message.reply_text(f"❌ Error placing order: {str(e)}")
+            else:
+                await update.message.reply_text("❌ Broker not available for order placement")
+                
+        except ValueError:
+            await update.message.reply_text("❌ Please enter a valid quantity number")
+
     async def _handle_order_type_selection(self, update: Update, message_text: str) -> None:
         """Handle order type selection (Limit Order or Market Order)"""
         user_id = update.effective_user.id
@@ -1852,9 +2265,10 @@ Select a strike price:
         # Store order type in context
         user_data['order_type'] = order_type
         
-        # Get current LTP
+        # Get current LTP from broker API
         try:
             current_ltp = self.get_option_ltp(option_symbol)
+            self.logger.info(f"Successfully got current LTP from broker API: {current_ltp}")
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {str(e)}")
             return
@@ -1877,16 +2291,24 @@ Select a strike price:
 *Current LTP:* ₹{current_ltp:,.2f}
 
 Please enter your limit price:
-(Example: 150.50)
+(Example: 150.50 or 150)
+
+Type your limit price as a number.
             """
             
-            # Create quantity input keyboard
-            quantity_keyboard = [
-                [KeyboardButton("25"), KeyboardButton("50"), KeyboardButton("100")],
-                [KeyboardButton("200"), KeyboardButton("500"), KeyboardButton("1000")],
-                [KeyboardButton("🔙 Back to Instruments")]
-            ]
-            reply_markup = ReplyKeyboardMarkup(quantity_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            # Create price suggestion keyboard based on current LTP
+            price_suggestions = []
+            if current_ltp:
+                # Suggest prices around current LTP
+                base_price = round(current_ltp)
+                suggestions = [
+                    str(base_price - 5), str(base_price - 2), str(base_price),
+                    str(base_price + 2), str(base_price + 5)
+                ]
+                price_suggestions = [[s] for s in suggestions]
+            
+            price_suggestions.append(["🔙 Back to Instruments"])
+            reply_markup = ReplyKeyboardMarkup(price_suggestions, resize_keyboard=True, one_time_keyboard=False)
             
         else:  # MARKET ORDER
             message = f"""
@@ -1900,12 +2322,17 @@ Please enter your limit price:
 Please select quantity:
             """
             
+            # Get lot size and generate quantity options
+            lot_size = user_data.get('lot_size', 25)
+            quantity_options = self._generate_quantity_options(lot_size)
+            
             # Create quantity input keyboard
-            quantity_keyboard = [
-                [KeyboardButton("25"), KeyboardButton("50"), KeyboardButton("100")],
-                [KeyboardButton("200"), KeyboardButton("500"), KeyboardButton("1000")],
-                [KeyboardButton("🔙 Back to Instruments")]
-            ]
+            quantity_keyboard = []
+            for i in range(0, len(quantity_options), 3):
+                row = [KeyboardButton(str(qty)) for qty in quantity_options[i:i+3]]
+                quantity_keyboard.append(row)
+            
+            quantity_keyboard.append([KeyboardButton("🔙 Back to Instruments")])
             reply_markup = ReplyKeyboardMarkup(quantity_keyboard, resize_keyboard=True, one_time_keyboard=False)
         
         await update.message.reply_text(
@@ -2103,6 +2530,127 @@ Please select quantity:
         finally:
             await self.application.stop()
             await self.application.shutdown()
+    
+    def _is_trade_selection(self, update: Update) -> bool:
+        """Check if the message is a trade selection for modification"""
+        user_id = update.effective_user.id
+        if not hasattr(self, 'user_context') or user_id not in self.user_context:
+            return False
+        
+        user_data = self.user_context[user_id]
+        return user_data.get('in_modify_mode', False) and 'trades_list' in user_data
+    
+    def _is_modify_option_selection(self, update: Update) -> bool:
+        """Check if the message is a modify option selection"""
+        user_id = update.effective_user.id
+        if not hasattr(self, 'user_context') or user_id not in self.user_context:
+            return False
+        
+        user_data = self.user_context[user_id]
+        return user_data.get('in_modify_mode', False) and 'selected_trade_id' in user_data
+    
+    async def _handle_trade_selection(self, update: Update, message_text: str) -> None:
+        """Handle trade selection for modification"""
+        user_id = update.effective_user.id
+        user_data = self.user_context[user_id]
+        
+        if message_text == "❌ Cancel":
+            await self._handle_modify_cancel(update)
+            return
+        
+        trades_list = user_data.get('trades_list', {})
+        if message_text not in trades_list:
+            await update.message.reply_text("❌ Invalid trade selection. Please try again.")
+            return
+        
+        # Store selected trade ID
+        selected_trade_id = trades_list[message_text]
+        user_data['selected_trade_id'] = selected_trade_id
+        
+        # Get order details
+        active_orders = self.order_manager.get_active_orders()
+        selected_order = None
+        for order in active_orders:
+            if order['order_id'] == selected_trade_id:
+                selected_order = order
+                break
+        
+        if not selected_order:
+            await update.message.reply_text("❌ Selected trade not found.")
+            return
+        
+        # Show modify options
+        keyboard = [
+            ["❌ Cancel Order"],
+            ["📊 View Details"],
+            ["❌ Back"]
+        ]
+        
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        
+        await update.message.reply_text(
+            f"🔧 What would you like to do with this trade?\n\n"
+            f"**{selected_order['symbol']}**\n"
+            f"• Entry: ₹{selected_order['price']}\n"
+            f"• Qty: {selected_order['quantity']}\n"
+            f"• Status: {selected_order['status']}",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    async def _handle_modify_option_selection(self, update: Update, message_text: str) -> None:
+        """Handle modify option selection"""
+        user_id = update.effective_user.id
+        user_data = self.user_context[user_id]
+        selected_trade_id = user_data.get('selected_trade_id')
+        
+        if message_text == "❌ Cancel Order":
+            # Cancel the order
+            success, message = self.order_manager.cancel_order(selected_trade_id)
+            await update.message.reply_text(f"❌ {message}")
+            await self._handle_modify_cancel(update)
+            
+        elif message_text == "📊 View Details":
+            # Show detailed trade information
+            active_orders = self.order_manager.get_active_orders()
+            selected_order = None
+            for order in active_orders:
+                if order['order_id'] == selected_trade_id:
+                    selected_order = order
+                    break
+            
+            if selected_order:
+                details_msg = f"""
+📊 **Trade Details**
+
+**Symbol:** {selected_order['symbol']}
+**Order ID:** `{selected_order['order_id']}`
+**Entry Price:** ₹{selected_order['price']}
+**Quantity:** {selected_order['quantity']}
+**Status:** {selected_order['status']}
+**Created:** {selected_order['created_at'][:19]}
+**Type:** {selected_order['order_type']}
+                """
+                await update.message.reply_text(details_msg, parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ Trade details not found.")
+                
+        elif message_text == "❌ Back":
+            await self._handle_modify_cancel(update)
+        else:
+            await update.message.reply_text("❌ Invalid option. Please try again.")
+    
+    async def _handle_modify_cancel(self, update: Update) -> None:
+        """Handle cancel in modify mode"""
+        user_id = update.effective_user.id
+        if hasattr(self, 'user_context') and user_id in self.user_context:
+            user_data = self.user_context[user_id]
+            user_data.pop('in_modify_mode', None)
+            user_data.pop('selected_trade_id', None)
+            user_data.pop('trades_list', None)
+        
+        # Show main menu
+        await self._show_main_menu(update)
     
     async def stop(self) -> None:
         """Stop the Telegram bot"""

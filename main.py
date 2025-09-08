@@ -133,6 +133,19 @@ class DuplicatorApp:
         """Send order notification to Telegram"""
         try:
             if self.telegram_bot:
+                # Check if testing mode is enabled
+                testing_mode = config.get('orders', {}).get('testing_mode', False)
+                
+                # Skip REJECTED status notifications during testing (but still log them)
+                if order_update.status == 'REJECTED' and testing_mode:
+                    self.logger.info(
+                        f"Order {order_update.order_id} REJECTED (testing mode - notification skipped): "
+                        f"Symbol: {order_update.symbol}, Broker: {order_update.broker}, "
+                        f"Qty: {order_update.quantity}, Price: ₹{order_update.price}"
+                    )
+                    return
+                
+                # Send notifications for other statuses
                 status_emoji = {
                     'COMPLETE': '✅',
                     'CANCELLED': '❌',
