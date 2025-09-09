@@ -76,16 +76,20 @@ class WebSocketManager:
         self._price_callbacks.append(callback)
     
     def start(self) -> None:
-        """Start websocket connections for all brokers"""
+        """Start websocket connections with optimized strategy"""
         try:
             self.logger.info("Starting websocket connections...")
             self.is_running = True
             
-            # Start websockets for all brokers
-            self.broker_manager.start_websockets_all(
-                order_callback=self._handle_order_update,
-                quote_callback=self._handle_quote_update
-            )
+            # Get connected brokers
+            connected_brokers = self.broker_manager.get_connected_brokers()
+            if not connected_brokers:
+                self.logger.error("No connected brokers available")
+                self.is_running = False
+                return
+            
+            # Start websockets with different strategies
+            self._start_optimized_websockets(connected_brokers)
             
             # Start monitoring thread
             self._monitor_thread = threading.Thread(target=self._monitor_connections, daemon=True)
@@ -100,6 +104,51 @@ class WebSocketManager:
         except Exception as e:
             self.logger.error(f"Error starting websockets: {e}")
             self.is_running = False
+    
+    def _start_optimized_websockets(self, connected_brokers: Dict[str, Any]) -> None:
+        """Start websockets with optimized strategy:
+        - Price/Quote updates: Only Broker 1
+        - Order updates: Both brokers individually
+        """
+        try:
+            broker_names = list(connected_brokers.keys())
+            
+            if not broker_names:
+                self.logger.error("No brokers available for websocket setup")
+                return
+            
+            # Get the first broker (Broker 1) for price/quote updates
+            primary_broker_name = broker_names[0]
+            primary_broker = connected_brokers[primary_broker_name]
+            
+            self.logger.info(f"Setting up websockets:")
+            self.logger.info(f"  - Price/Quote updates: {primary_broker_name} only")
+            self.logger.info(f"  - Order updates: All brokers ({', '.join(broker_names)})")
+            
+            # Start websocket for primary broker (Broker 1) with both callbacks
+            try:
+                primary_broker.start_websocket(
+                    order_callback=self._handle_order_update,
+                    quote_callback=self._handle_quote_update
+                )
+                self.logger.info(f"Started websocket for {primary_broker_name} (price + order updates)")
+            except Exception as e:
+                self.logger.error(f"Failed to start websocket for {primary_broker_name}: {e}")
+            
+            # Start websockets for other brokers with only order callbacks
+            for broker_name in broker_names[1:]:
+                try:
+                    broker = connected_brokers[broker_name]
+                    broker.start_websocket(
+                        order_callback=self._handle_order_update,
+                        quote_callback=None  # No price updates for secondary brokers
+                    )
+                    self.logger.info(f"Started websocket for {broker_name} (order updates only)")
+                except Exception as e:
+                    self.logger.error(f"Failed to start websocket for {broker_name}: {e}")
+            
+        except Exception as e:
+            self.logger.error(f"Error in optimized websocket setup: {e}")
     
     def stop(self) -> None:
         """Stop websocket connections"""
@@ -122,55 +171,67 @@ class WebSocketManager:
             self.logger.error(f"Error stopping websockets: {e}")
     
     def subscribe_symbol(self, symbol: str, exchange: str = "NFO") -> bool:
-        """Subscribe to symbol on all connected brokers"""
+        """Subscribe to symbol for price updates (Broker 1 only)"""
         try:
             connected_brokers = self.broker_manager.get_connected_brokers()
             if not connected_brokers:
                 self.logger.warning("No connected brokers available for subscription")
                 return False
             
-            success_count = 0
-            for broker_name, broker in connected_brokers.items():
-                try:
-                    # Format symbol for websocket subscription
-                    ws_symbol = f"{exchange}|{symbol}"
-                    if broker.subscribe(ws_symbol):
-                        if broker_name not in self._subscribed_symbols:
-                            self._subscribed_symbols[broker_name] = []
-                        self._subscribed_symbols[broker_name].append(ws_symbol)
-                        success_count += 1
-                        self.logger.info(f"Subscribed to {symbol} on {broker_name}")
-                    else:
-                        self.logger.error(f"Failed to subscribe to {symbol} on {broker_name}")
-                except Exception as e:
-                    self.logger.error(f"Error subscribing to {symbol} on {broker_name}: {e}")
+            # Get the first broker (Broker 1) for price subscriptions
+            broker_names = list(connected_brokers.keys())
+            primary_broker_name = broker_names[0]
+            primary_broker = connected_brokers[primary_broker_name]
             
-            return success_count > 0
+            try:
+                # Format symbol for websocket subscription
+                ws_symbol = f"{exchange}|{symbol}"
+                if primary_broker.subscribe(ws_symbol):
+                    if primary_broker_name not in self._subscribed_symbols:
+                        self._subscribed_symbols[primary_broker_name] = []
+                    self._subscribed_symbols[primary_broker_name].append(ws_symbol)
+                    self.logger.info(f"Subscribed to {symbol} for price updates on {primary_broker_name}")
+                    return True
+                else:
+                    self.logger.error(f"Failed to subscribe to {symbol} on {primary_broker_name}")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Error subscribing to {symbol} on {primary_broker_name}: {e}")
+                return False
             
         except Exception as e:
             self.logger.error(f"Error subscribing to symbol {symbol}: {e}")
             return False
     
     def unsubscribe_symbol(self, symbol: str, exchange: str = "NFO") -> bool:
-        """Unsubscribe from symbol on all brokers"""
+        """Unsubscribe from symbol for price updates (Broker 1 only)"""
         try:
             connected_brokers = self.broker_manager.get_connected_brokers()
+            if not connected_brokers:
+                self.logger.warning("No connected brokers available for unsubscription")
+                return False
+            
+            # Get the first broker (Broker 1) for price unsubscriptions
+            broker_names = list(connected_brokers.keys())
+            primary_broker_name = broker_names[0]
+            primary_broker = connected_brokers[primary_broker_name]
+            
             ws_symbol = f"{exchange}|{symbol}"
             
-            success_count = 0
-            for broker_name, broker in connected_brokers.items():
-                try:
-                    if broker.unsubscribe(ws_symbol):
-                        if broker_name in self._subscribed_symbols:
-                            self._subscribed_symbols[broker_name] = [
-                                s for s in self._subscribed_symbols[broker_name] if s != ws_symbol
-                            ]
-                        success_count += 1
-                        self.logger.info(f"Unsubscribed from {symbol} on {broker_name}")
-                except Exception as e:
-                    self.logger.error(f"Error unsubscribing from {symbol} on {broker_name}: {e}")
-            
-            return success_count > 0
+            try:
+                if primary_broker.unsubscribe(ws_symbol):
+                    if primary_broker_name in self._subscribed_symbols:
+                        self._subscribed_symbols[primary_broker_name] = [
+                            s for s in self._subscribed_symbols[primary_broker_name] if s != ws_symbol
+                        ]
+                    self.logger.info(f"Unsubscribed from {symbol} for price updates on {primary_broker_name}")
+                    return True
+                else:
+                    self.logger.error(f"Failed to unsubscribe from {symbol} on {primary_broker_name}")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Error unsubscribing from {symbol} on {primary_broker_name}: {e}")
+                return False
             
         except Exception as e:
             self.logger.error(f"Error unsubscribing from symbol {symbol}: {e}")
@@ -179,10 +240,14 @@ class WebSocketManager:
     def _handle_order_update(self, order_data: Dict[str, Any]) -> None:
         """Handle order update from broker websocket"""
         try:
+            # Determine which broker this update came from
+            # We need to identify the broker based on the order data or context
+            broker_name = self._identify_broker_from_order_data(order_data)
+            
             # Extract order information
             order_update = OrderUpdate(
                 order_id=order_data.get('norenordno', ''),
-                broker=order_data.get('uid', 'unknown'),
+                broker=broker_name,
                 status=order_data.get('status', ''),
                 symbol=order_data.get('tsym', ''),
                 quantity=int(order_data.get('qty', 0)),
@@ -194,7 +259,7 @@ class WebSocketManager:
             )
             
             # Update order manager
-            self.order_manager.handle_order_update(order_update.broker, order_data)
+            self.order_manager.handle_order_update(broker_name, order_data)
             
             # Notify callbacks
             for callback in self._order_callbacks:
@@ -213,9 +278,34 @@ class WebSocketManager:
         except Exception as e:
             self.logger.error(f"Error handling order update: {e}")
     
-    def _handle_quote_update(self, quote_data: Dict[str, Any]) -> None:
-        """Handle quote update from broker websocket"""
+    def _identify_broker_from_order_data(self, order_data: Dict[str, Any]) -> str:
+        """Identify which broker an order update came from"""
         try:
+            # Check if broker name is provided in the order data
+            broker_name = order_data.get('broker_name')
+            if broker_name:
+                return broker_name
+            
+            # Fallback: try to identify from other fields
+            # This might need to be enhanced based on how Shoonya API provides broker identification
+            connected_brokers = self.broker_manager.get_connected_brokers()
+            
+            if not connected_brokers:
+                return "unknown"
+            
+            # For now, return the first available broker as fallback
+            return list(connected_brokers.keys())[0]
+            
+        except Exception as e:
+            self.logger.error(f"Error identifying broker from order data: {e}")
+            return "unknown"
+    
+    def _handle_quote_update(self, quote_data: Dict[str, Any]) -> None:
+        """Handle quote update from broker websocket (Broker 1 only)"""
+        try:
+            # Identify broker (should be Broker 1 for price updates)
+            broker_name = quote_data.get('broker_name', 'broker1')
+            
             # Extract quote information
             price_update = PriceUpdate(
                 symbol=quote_data.get('tsym', ''),
@@ -224,7 +314,7 @@ class WebSocketManager:
                 last_price=float(quote_data.get('lp', 0)),
                 volume=int(quote_data.get('vol', 0)),
                 timestamp=datetime.now(),
-                broker=quote_data.get('uid', 'unknown')
+                broker=broker_name
             )
             
             # Notify callbacks
@@ -236,8 +326,7 @@ class WebSocketManager:
             
             # Log price updates (debug level to avoid spam)
             self.logger.debug(
-                f"Price update: {price_update.symbol} = ₹{price_update.last_price} "
-                f"on {price_update.broker}"
+                f"Price update from {broker_name}: {price_update.symbol} = ₹{price_update.last_price}"
             )
                 
         except Exception as e:

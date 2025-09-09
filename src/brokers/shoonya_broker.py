@@ -72,6 +72,7 @@ class ShoonyaBroker(BaseBroker):
             
             if login_response and 'uname' in login_response:
                 self.is_connected = True
+                self._last_login_time = time.strftime('%Y-%m-%d %H:%M:%S')
                 self.logger.info(f"Successfully connected to Shoonya as {login_response['uname']}")
                 return True
             else:
@@ -286,12 +287,16 @@ class ShoonyaBroker(BaseBroker):
     
     def _on_order_update(self, order_data: Dict[str, Any]) -> None:
         """Handle order update from websocket"""
-        self.logger.debug(f"Order update: {order_data}")
+        # Add broker name to order data for identification
+        order_data['broker_name'] = self.name
+        self.logger.debug(f"Order update from {self.name}: {order_data}")
         self._notify_order_update(order_data)
     
     def _on_quote_update(self, quote_data: Dict[str, Any]) -> None:
         """Handle quote update from websocket"""
-        self.logger.debug(f"Quote update: {quote_data}")
+        # Add broker name to quote data for identification
+        quote_data['broker_name'] = self.name
+        self.logger.debug(f"Quote update from {self.name}: {quote_data}")
         self._notify_quote_update(quote_data)
     
     def _on_socket_open(self) -> None:
@@ -325,3 +330,115 @@ class ShoonyaBroker(BaseBroker):
         except Exception as e:
             self.logger.error(f"Error unsubscribing from {symbol}: {e}")
             return False
+    
+    def is_healthy(self) -> bool:
+        """Check if broker is healthy and connected"""
+        return self.is_connected and self.api is not None
+    
+    def get_orders_today(self) -> int:
+        """Get count of orders placed today"""
+        try:
+            if not self.is_connected or not self.api:
+                return 0
+            
+            # Get today's date
+            from datetime import datetime
+            today = datetime.now().strftime('%d-%m-%Y')
+            
+            # Get order book for today
+            order_book = self.api.get_order_book()
+            if order_book and isinstance(order_book, list):
+                # Count orders from today
+                today_orders = [order for order in order_book 
+                              if order.get('d', '').startswith(today)]
+                return len(today_orders)
+            return 0
+        except Exception as e:
+            self.logger.error(f"Error getting orders today: {e}")
+            return 0
+    
+    def get_success_rate(self) -> float:
+        """Get success rate of orders"""
+        try:
+            if not self.is_connected or not self.api:
+                return 0.0
+            
+            order_book = self.api.get_order_book()
+            if not order_book or not isinstance(order_book, list):
+                return 0.0
+            
+            total_orders = len(order_book)
+            if total_orders == 0:
+                return 0.0
+            
+            # Count completed orders
+            completed_orders = len([order for order in order_book 
+                                  if order.get('status') == 'COMPLETE'])
+            
+            return (completed_orders / total_orders) * 100
+        except Exception as e:
+            self.logger.error(f"Error getting success rate: {e}")
+            return 0.0
+    
+    def get_pnl_today(self) -> float:
+        """Get P&L for today"""
+        try:
+            if not self.is_connected or not self.api:
+                return 0.0
+            
+            positions = self.api.get_positions()
+            if not positions or not isinstance(positions, list):
+                return 0.0
+            
+            total_pnl = sum(float(pos.get('pnl', 0)) for pos in positions)
+            return total_pnl
+        except Exception as e:
+            self.logger.error(f"Error getting P&L today: {e}")
+            return 0.0
+    
+    def get_active_orders_count(self) -> int:
+        """Get count of active orders"""
+        try:
+            if not self.is_connected or not self.api:
+                return 0
+            
+            order_book = self.api.get_order_book()
+            if not order_book or not isinstance(order_book, list):
+                return 0
+            
+            # Count active orders (PENDING, OPEN)
+            active_statuses = ['PENDING', 'OPEN', 'TRIGGER_PENDING']
+            active_orders = len([order for order in order_book 
+                               if order.get('status') in active_statuses])
+            return active_orders
+        except Exception as e:
+            self.logger.error(f"Error getting active orders count: {e}")
+            return 0
+    
+    def get_connection_info(self) -> Dict[str, Any]:
+        """Get connection information"""
+        try:
+            if not self.is_connected or not self.api:
+                return {}
+            
+            return {
+                "session_id": getattr(self.api, 'session_id', 'N/A'),
+                "last_heartbeat": getattr(self.api, 'last_heartbeat', None),
+                "user_id": self.credentials.get('username', 'N/A'),
+                "api_type": "shoonya"
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting connection info: {e}")
+            return {}
+    
+    @property
+    def last_login_time(self) -> Optional[str]:
+        """Get last login time"""
+        if hasattr(self, '_last_login_time'):
+            return self._last_login_time
+        return None
+    
+    @property
+    def api_type(self) -> str:
+        """Get API type"""
+        return "shoonya"

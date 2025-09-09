@@ -97,9 +97,11 @@ class OrderManager:
                    product_type: ProductType = ProductType.INTRADAY,
                    price_type: PriceType = PriceType.LIMIT,
                    remarks: Optional[str] = None) -> Tuple[bool, str, Optional[DuplicatedOrder]]:
-        """Place order across all connected brokers"""
+        """Place order across all connected brokers - ULTRA-FAST PARALLEL EXECUTION"""
+        start_time = time.time()
+        
         try:
-            # Create order request
+            # Create order request (optimized for speed)
             order_request = OrderRequest(
                 buy_or_sell=order_type,
                 product_type=product_type,
@@ -111,7 +113,7 @@ class OrderManager:
                 remarks=remarks
             )
             
-            # Place order on all brokers
+            # Place order on all brokers in parallel
             broker_responses = self.broker_manager.place_order_all(order_request)
             
             # Check if any orders were successful
@@ -119,11 +121,11 @@ class OrderManager:
                                if resp.success}
             
             if not successful_orders:
-                self.logger.error("No orders were placed successfully")
+                self.logger.error("❌ No orders were placed successfully")
                 return False, "No orders placed successfully", None
             
-            # Create duplicated order record
-            order_id = f"ORD_{int(time.time())}"
+            # Create duplicated order record (optimized)
+            order_id = f"ORD_{int(time.time() * 1000)}"  # Use milliseconds for uniqueness
             duplicated_order = DuplicatedOrder(
                 order_id=order_id,
                 symbol=symbol,
@@ -137,11 +139,17 @@ class OrderManager:
                 remarks=remarks
             )
             
+            # Store order in memory immediately (file save in background)
             self.orders[order_id] = duplicated_order
-            self._save_orders()
             
-            self.logger.info(f"Order {order_id} placed successfully on {len(successful_orders)} brokers")
-            return True, f"Order placed on {len(successful_orders)} brokers", duplicated_order
+            # Save to file asynchronously to avoid blocking
+            import threading
+            threading.Thread(target=self._save_orders, daemon=True).start()
+            
+            execution_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+            self.logger.info(f"🚀 Order {order_id} placed on {len(successful_orders)} brokers in {execution_time:.2f}ms")
+            
+            return True, f"Order placed on {len(successful_orders)} brokers in {execution_time:.1f}ms", duplicated_order
             
         except Exception as e:
             self.logger.error(f"Error placing order: {e}")

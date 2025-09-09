@@ -82,7 +82,12 @@ class BrokerManager:
                 if broker.is_healthy()}
     
     def place_order_all(self, order_request: OrderRequest) -> Dict[str, OrderResponse]:
-        """Place order on all connected brokers"""
+        """Place order on all connected brokers - PARALLEL EXECUTION for speed"""
+        import asyncio
+        import concurrent.futures
+        import time
+        
+        start_time = time.time()
         results = {}
         connected_brokers = self.get_connected_brokers()
         
@@ -90,63 +95,135 @@ class BrokerManager:
             self.logger.warning("No connected brokers available")
             return results
         
-        for name, broker in connected_brokers.items():
-            try:
-                response = broker.place_order(order_request)
-                results[name] = response
-                
-                if response.success:
-                    self.logger.info(f"Order placed successfully on {name}: {response.order_id}")
-                else:
-                    self.logger.error(f"Order failed on {name}: {response.message}")
+        # Use ThreadPoolExecutor for parallel execution
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(connected_brokers)) as executor:
+            # Submit all orders simultaneously
+            future_to_broker = {
+                executor.submit(self._place_order_single, name, broker, order_request): name
+                for name, broker in connected_brokers.items()
+            }
+            
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(future_to_broker):
+                broker_name = future_to_broker[future]
+                try:
+                    response = future.result()
+                    results[broker_name] = response
                     
-            except Exception as e:
-                self.logger.error(f"Error placing order on {name}: {e}")
-                results[name] = OrderResponse(False, message=str(e))
+                    if response.success:
+                        self.logger.info(f"✅ Order placed on {broker_name}: {response.order_id}")
+                    else:
+                        self.logger.error(f"❌ Order failed on {broker_name}: {response.message}")
+                        
+                except Exception as e:
+                    self.logger.error(f"💥 Error placing order on {broker_name}: {e}")
+                    results[broker_name] = OrderResponse(False, message=str(e))
+        
+        execution_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+        self.logger.info(f"🚀 Parallel order execution completed in {execution_time:.2f}ms")
         
         return results
+    
+    def _place_order_single(self, broker_name: str, broker: Any, order_request: OrderRequest) -> OrderResponse:
+        """Place order on a single broker (used for parallel execution)"""
+        try:
+            return broker.place_order(order_request)
+        except Exception as e:
+            return OrderResponse(False, message=str(e))
     
     def modify_order_all(self, order_id: str, order_request: OrderRequest) -> Dict[str, OrderResponse]:
-        """Modify order on all connected brokers"""
+        """Modify order on all connected brokers - PARALLEL EXECUTION"""
+        import concurrent.futures
+        import time
+        
+        start_time = time.time()
         results = {}
         connected_brokers = self.get_connected_brokers()
         
-        for name, broker in connected_brokers.items():
-            try:
-                response = broker.modify_order(order_id, order_request)
-                results[name] = response
-                
-                if response.success:
-                    self.logger.info(f"Order modified successfully on {name}")
-                else:
-                    self.logger.error(f"Order modification failed on {name}: {response.message}")
+        if not connected_brokers:
+            self.logger.warning("No connected brokers available")
+            return results
+        
+        # Use ThreadPoolExecutor for parallel execution
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(connected_brokers)) as executor:
+            future_to_broker = {
+                executor.submit(self._modify_order_single, name, broker, order_id, order_request): name
+                for name, broker in connected_brokers.items()
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_broker):
+                broker_name = future_to_broker[future]
+                try:
+                    response = future.result()
+                    results[broker_name] = response
                     
-            except Exception as e:
-                self.logger.error(f"Error modifying order on {name}: {e}")
-                results[name] = OrderResponse(False, message=str(e))
+                    if response.success:
+                        self.logger.info(f"✅ Order modified on {broker_name}")
+                    else:
+                        self.logger.error(f"❌ Order modification failed on {broker_name}: {response.message}")
+                        
+                except Exception as e:
+                    self.logger.error(f"💥 Error modifying order on {broker_name}: {e}")
+                    results[broker_name] = OrderResponse(False, message=str(e))
+        
+        execution_time = (time.time() - start_time) * 1000
+        self.logger.info(f"🚀 Parallel order modification completed in {execution_time:.2f}ms")
         
         return results
     
+    def _modify_order_single(self, broker_name: str, broker: Any, order_id: str, order_request: OrderRequest) -> OrderResponse:
+        """Modify order on a single broker (used for parallel execution)"""
+        try:
+            return broker.modify_order(order_id, order_request)
+        except Exception as e:
+            return OrderResponse(False, message=str(e))
+    
     def cancel_order_all(self, order_id: str) -> Dict[str, OrderResponse]:
-        """Cancel order on all connected brokers"""
+        """Cancel order on all connected brokers - PARALLEL EXECUTION"""
+        import concurrent.futures
+        import time
+        
+        start_time = time.time()
         results = {}
         connected_brokers = self.get_connected_brokers()
         
-        for name, broker in connected_brokers.items():
-            try:
-                response = broker.cancel_order(order_id)
-                results[name] = response
-                
-                if response.success:
-                    self.logger.info(f"Order cancelled successfully on {name}")
-                else:
-                    self.logger.error(f"Order cancellation failed on {name}: {response.message}")
+        if not connected_brokers:
+            self.logger.warning("No connected brokers available")
+            return results
+        
+        # Use ThreadPoolExecutor for parallel execution
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(connected_brokers)) as executor:
+            future_to_broker = {
+                executor.submit(self._cancel_order_single, name, broker, order_id): name
+                for name, broker in connected_brokers.items()
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_broker):
+                broker_name = future_to_broker[future]
+                try:
+                    response = future.result()
+                    results[broker_name] = response
                     
-            except Exception as e:
-                self.logger.error(f"Error cancelling order on {name}: {e}")
-                results[name] = OrderResponse(False, message=str(e))
+                    if response.success:
+                        self.logger.info(f"✅ Order cancelled on {broker_name}")
+                    else:
+                        self.logger.error(f"❌ Order cancellation failed on {broker_name}: {response.message}")
+                        
+                except Exception as e:
+                    self.logger.error(f"💥 Error cancelling order on {broker_name}: {e}")
+                    results[broker_name] = OrderResponse(False, message=str(e))
+        
+        execution_time = (time.time() - start_time) * 1000
+        self.logger.info(f"🚀 Parallel order cancellation completed in {execution_time:.2f}ms")
         
         return results
+    
+    def _cancel_order_single(self, broker_name: str, broker: Any, order_id: str) -> OrderResponse:
+        """Cancel order on a single broker (used for parallel execution)"""
+        try:
+            return broker.cancel_order(order_id)
+        except Exception as e:
+            return OrderResponse(False, message=str(e))
     
     def get_all_positions(self) -> Dict[str, List[Any]]:
         """Get positions from all connected brokers"""

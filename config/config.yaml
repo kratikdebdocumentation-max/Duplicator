@@ -27,7 +27,7 @@ brokers:
     
   broker2:
     name: "Shoonya Broker 2"
-    enabled: false  # Temporarily disabled due to blocked credentials
+    enabled: true  # Enabled for dual broker trading
     credentials_file: "credentials2.json"
     api_type: "shoonya"
 

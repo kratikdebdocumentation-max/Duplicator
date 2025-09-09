@@ -1,15 +1,16 @@
+#!/usr/bin/env python3
 """
-FastAPI Web Server for Duplicator Trading Bot
-High-performance local web interface for trading operations
+Integrated Web Server with Broker Connections
+Combines web interface with broker management for complete functionality
 """
 
 import asyncio
 import json
 import time
+import sys
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from pathlib import Path
-import sys
 
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent / "src"))
@@ -41,16 +42,6 @@ class OrderRequest(BaseModel):
     remarks: Optional[str] = None
 
 
-class OrderModifyRequest(BaseModel):
-    order_id: str
-    new_quantity: Optional[int] = None
-    new_price: Optional[float] = None
-
-
-class OrderCancelRequest(BaseModel):
-    order_id: str
-
-
 class WebSocketManager:
     """Manages WebSocket connections for real-time updates"""
     
@@ -67,12 +58,6 @@ class WebSocketManager:
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
         self.logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
-    
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        try:
-            await websocket.send_text(message)
-        except Exception as e:
-            self.logger.error(f"Error sending personal message: {e}")
     
     async def broadcast(self, message: str):
         """Broadcast message to all connected clients"""
@@ -92,15 +77,15 @@ class WebSocketManager:
             self.disconnect(connection)
 
 
-class TradingWebApp:
-    """Main trading web application"""
+class IntegratedTradingApp:
+    """Integrated trading web application with broker connections"""
     
     def __init__(self):
-        self.logger = get_logger('trading_web_app')
+        self.logger = get_logger('integrated_web_app')
         self.app = FastAPI(
-            title="Duplicator Trading Bot",
-            description="High-performance trading interface",
-            version="1.0.0"
+            title="Ultra-Fast Dual Broker Trading",
+            description="High-performance trading interface with parallel execution",
+            version="2.0.0"
         )
         
         # Initialize components
@@ -136,39 +121,87 @@ class TradingWebApp:
             """Health check endpoint"""
             try:
                 broker_status = self.broker_manager.get_health_status() if self.broker_manager else {}
+                connected_count = sum(1 for status in broker_status.values() if status)
+                
                 return {
                     "status": "healthy",
                     "timestamp": datetime.now().isoformat(),
                     "brokers": broker_status,
+                    "connected_brokers": connected_count,
                     "active_orders": len(self.order_manager.get_active_orders()) if self.order_manager else 0
                 }
             except Exception as e:
                 return {"status": "unhealthy", "error": str(e)}
         
-        @self.app.get("/api/orders")
-        async def get_orders():
-            """Get all orders"""
+        @self.app.get("/api/brokers")
+        async def get_brokers():
+            """Get broker status"""
             try:
-                if not self.order_manager:
-                    raise HTTPException(status_code=500, detail="Order manager not initialized")
+                if not self.broker_manager:
+                    return {"brokers": {}}
                 
-                orders = self.order_manager.get_all_orders()
-                return {"orders": orders, "count": len(orders)}
+                broker_status = self.broker_manager.get_health_status()
+                return {"brokers": broker_status}
+                
             except Exception as e:
-                self.logger.error(f"Error getting orders: {e}")
+                self.logger.error(f"Error getting broker status: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
-        @self.app.get("/api/orders/active")
-        async def get_active_orders():
-            """Get active orders only"""
+        @self.app.get("/api/brokers/details")
+        async def get_broker_details():
+            """Get detailed broker information"""
             try:
-                if not self.order_manager:
-                    raise HTTPException(status_code=500, detail="Order manager not initialized")
+                if not self.broker_manager:
+                    return {"brokers": {}}
                 
-                orders = self.order_manager.get_active_orders()
-                return {"orders": orders, "count": len(orders)}
+                broker_details = {}
+                broker_status = self.broker_manager.get_health_status()
+                
+                # User names mapping
+                user_names = {
+                    "broker1": "Kratik Yadav",
+                    "broker2": "Roopal Soni"
+                }
+                
+                # Get detailed information for each broker
+                for broker_name, is_connected in broker_status.items():
+                    broker_instance = self.broker_manager.get_broker(broker_name)
+                    if broker_instance:
+                        details = {
+                            "name": broker_name,
+                            "user_name": user_names.get(broker_name, "Unknown User"),
+                            "api_type": getattr(broker_instance, 'api_type', 'shoonya'),
+                            "connected": is_connected,
+                            "last_login": getattr(broker_instance, 'last_login_time', None),
+                            "orders_today": 0,
+                            "success_rate": 0,
+                            "pnl_today": 0.0,
+                            "active_orders": 0,
+                            "connection_info": {}
+                        }
+                        
+                        # Try to get additional details if broker is connected
+                        if is_connected:
+                            try:
+                                if hasattr(broker_instance, 'get_orders_today'):
+                                    details["orders_today"] = broker_instance.get_orders_today()
+                                if hasattr(broker_instance, 'get_success_rate'):
+                                    details["success_rate"] = broker_instance.get_success_rate()
+                                if hasattr(broker_instance, 'get_pnl_today'):
+                                    details["pnl_today"] = broker_instance.get_pnl_today()
+                                if hasattr(broker_instance, 'get_active_orders_count'):
+                                    details["active_orders"] = broker_instance.get_active_orders_count()
+                                if hasattr(broker_instance, 'get_connection_info'):
+                                    details["connection_info"] = broker_instance.get_connection_info()
+                            except Exception as e:
+                                self.logger.warning(f"Error getting detailed info for {broker_name}: {e}")
+                        
+                        broker_details[broker_name] = details
+                
+                return {"brokers": broker_details}
+                
             except Exception as e:
-                self.logger.error(f"Error getting active orders: {e}")
+                self.logger.error(f"Error getting broker details: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/api/orders")
@@ -235,167 +268,6 @@ class TradingWebApp:
                 total_time = (time.time() - start_time) * 1000
                 self.logger.error(f"💥 Order error in {total_time:.2f}ms: {e}")
                 raise HTTPException(status_code=500, detail=f"Order failed in {total_time:.1f}ms: {str(e)}")
-    
-    async def _broadcast_order_update(self, order_data: dict):
-        """Broadcast order update asynchronously"""
-        try:
-            await self.ws_manager.broadcast(json.dumps({
-                "type": "order_placed",
-                "data": order_data
-            }))
-        except Exception as e:
-            self.logger.error(f"Error broadcasting order update: {e}")
-        
-        @self.app.put("/api/orders/{order_id}")
-        async def modify_order(order_id: str, modify_request: OrderModifyRequest, background_tasks: BackgroundTasks):
-            """Modify an existing order"""
-            try:
-                if not self.order_manager:
-                    raise HTTPException(status_code=500, detail="Order manager not initialized")
-                
-                success, message = self.order_manager.modify_order(
-                    order_id=order_id,
-                    new_quantity=modify_request.new_quantity,
-                    new_price=modify_request.new_price
-                )
-                
-                if success:
-                    # Broadcast order update
-                    await self.ws_manager.broadcast(json.dumps({
-                        "type": "order_modified",
-                        "data": {
-                            "order_id": order_id,
-                            "new_quantity": modify_request.new_quantity,
-                            "new_price": modify_request.new_price,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    }))
-                
-                return {"success": success, "message": message}
-                
-            except Exception as e:
-                self.logger.error(f"Error modifying order: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.delete("/api/orders/{order_id}")
-        async def cancel_order(order_id: str, background_tasks: BackgroundTasks):
-            """Cancel an order"""
-            try:
-                if not self.order_manager:
-                    raise HTTPException(status_code=500, detail="Order manager not initialized")
-                
-                success, message = self.order_manager.cancel_order(order_id)
-                
-                if success:
-                    # Broadcast order update
-                    await self.ws_manager.broadcast(json.dumps({
-                        "type": "order_cancelled",
-                        "data": {
-                            "order_id": order_id,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    }))
-                
-                return {"success": success, "message": message}
-                
-            except Exception as e:
-                self.logger.error(f"Error cancelling order: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.get("/api/positions")
-        async def get_positions():
-            """Get positions from all brokers"""
-            try:
-                if not self.order_manager:
-                    raise HTTPException(status_code=500, detail="Order manager not initialized")
-                
-                positions = self.order_manager.get_positions_summary()
-                return positions
-                
-            except Exception as e:
-                self.logger.error(f"Error getting positions: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.get("/api/brokers")
-        async def get_brokers():
-            """Get broker status"""
-            try:
-                if not self.broker_manager:
-                    return {"brokers": {}}
-                
-                broker_status = self.broker_manager.get_health_status()
-                return {"brokers": broker_status}
-                
-            except Exception as e:
-                self.logger.error(f"Error getting broker status: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.get("/api/brokers/details")
-        async def get_broker_details():
-            """Get detailed broker information"""
-            try:
-                if not self.broker_manager:
-                    return {"brokers": {}}
-                
-                broker_details = {}
-                broker_status = self.broker_manager.get_health_status()
-                
-                # Get detailed information for each broker
-                for broker_name, is_connected in broker_status.items():
-                    broker_instance = self.broker_manager.get_broker(broker_name)
-                    if broker_instance:
-                        # Get basic broker info
-                        user_names = {
-                            "broker1": "Kratik Yadav",
-                            "broker2": "Roopal Soni"
-                        }
-                        
-                        details = {
-                            "name": broker_name,
-                            "user_name": user_names.get(broker_name, "Unknown User"),
-                            "api_type": getattr(broker_instance, 'api_type', 'shoonya'),
-                            "connected": is_connected,
-                            "last_login": getattr(broker_instance, 'last_login_time', None),
-                            "orders_today": 0,
-                            "success_rate": 0,
-                            "pnl_today": 0.0,
-                            "active_orders": 0,
-                            "connection_info": {}
-                        }
-                        
-                        # Try to get additional details if broker is connected
-                        if is_connected:
-                            try:
-                                # Get orders count for today
-                                if hasattr(broker_instance, 'get_orders_today'):
-                                    details["orders_today"] = broker_instance.get_orders_today()
-                                
-                                # Get success rate
-                                if hasattr(broker_instance, 'get_success_rate'):
-                                    details["success_rate"] = broker_instance.get_success_rate()
-                                
-                                # Get P&L for today
-                                if hasattr(broker_instance, 'get_pnl_today'):
-                                    details["pnl_today"] = broker_instance.get_pnl_today()
-                                
-                                # Get active orders count
-                                if hasattr(broker_instance, 'get_active_orders_count'):
-                                    details["active_orders"] = broker_instance.get_active_orders_count()
-                                
-                                # Get connection info
-                                if hasattr(broker_instance, 'get_connection_info'):
-                                    details["connection_info"] = broker_instance.get_connection_info()
-                                
-                            except Exception as e:
-                                self.logger.warning(f"Error getting detailed info for {broker_name}: {e}")
-                        
-                        broker_details[broker_name] = details
-                
-                return {"brokers": broker_details}
-                
-            except Exception as e:
-                self.logger.error(f"Error getting broker details: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
@@ -413,10 +285,20 @@ class TradingWebApp:
                 self.logger.error(f"WebSocket error: {e}")
                 self.ws_manager.disconnect(websocket)
     
+    async def _broadcast_order_update(self, order_data: dict):
+        """Broadcast order update asynchronously"""
+        try:
+            await self.ws_manager.broadcast(json.dumps({
+                "type": "order_placed",
+                "data": order_data
+            }))
+        except Exception as e:
+            self.logger.error(f"Error broadcasting order update: {e}")
+    
     def _initialize_components(self):
         """Initialize trading components"""
         try:
-            self.logger.info("Initializing trading components...")
+            self.logger.info("Initializing integrated trading components...")
             
             # Initialize broker manager
             self.broker_manager = BrokerManager()
@@ -427,12 +309,13 @@ class TradingWebApp:
             self.logger.info("Order manager initialized")
             
             # Connect to brokers
+            self.logger.info("Connecting to brokers...")
             connection_results = self.broker_manager.connect_all()
             connected_brokers = [name for name, success in connection_results.items() if success]
             self.logger.info(f"Connected to brokers: {connected_brokers}")
             
             # Initialize trading websocket manager for real-time data
-            if self.broker_manager:
+            if self.broker_manager and connected_brokers:
                 self.trading_websocket_manager = TradingWebSocketManager(self.broker_manager, self.order_manager)
                 
                 # Add callbacks for real-time updates
@@ -442,10 +325,10 @@ class TradingWebApp:
                 self.trading_websocket_manager.start()
                 self.logger.info("Trading WebSocket manager started")
             
-            self.logger.info("All components initialized successfully")
+            self.logger.info("✅ All components initialized successfully")
             
         except Exception as e:
-            self.logger.error(f"Failed to initialize components: {e}")
+            self.logger.error(f"❌ Failed to initialize components: {e}")
     
     def _on_order_update(self, order_update) -> None:
         """Handle order update from trading websocket"""
@@ -488,8 +371,8 @@ class TradingWebApp:
             self.logger.error(f"Error handling price update: {e}")
     
     def run(self, host: str = "127.0.0.1", port: int = 8000, reload: bool = False):
-        """Run the web server"""
-        self.logger.info(f"Starting web server on {host}:{port}")
+        """Run the integrated web server"""
+        self.logger.info(f"🚀 Starting Integrated Ultra-Fast Trading Server on {host}:{port}")
         uvicorn.run(
             self.app,
             host=host,
@@ -502,7 +385,7 @@ class TradingWebApp:
 
 def main():
     """Main entry point"""
-    app = TradingWebApp()
+    app = IntegratedTradingApp()
     app.run()
 
 
