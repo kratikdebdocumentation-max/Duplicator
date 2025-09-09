@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Duplicator Trading Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .trading-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .performance-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .analytics-card {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        .order-card {
+            transition: all 0.3s ease;
+        }
+        .order-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status-pending { background-color: #fef3c7; color: #92400e; }
+        .status-open { background-color: #dbeafe; color: #1e40af; }
+        .status-complete { background-color: #d1fae5; color: #065f46; }
+        .status-cancelled { background-color: #fee2e2; color: #991b1b; }
+        .status-rejected { background-color: #fecaca; color: #7f1d1d; }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .loading-spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center">
+                    <i class="fas fa-chart-line text-2xl text-blue-600 mr-3"></i>
+                    <h1 class="text-2xl font-bold text-gray-800">Duplicator Trading Bot</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-2">
+                        <div id="connection-status" class="w-3 h-3 bg-red-500 rounded-full"></div>
+                        <span class="text-sm text-gray-600">Connection</span>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                        <span id="current-time"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <!-- Enhanced Status Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="trading-card rounded-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-blue-100 text-sm">Active Orders</p>
+                        <p class="text-3xl font-bold" id="active-orders-count">0</p>
+                        <p class="text-blue-200 text-xs" id="orders-trend">+0 today</p>
+                    </div>
+                    <i class="fas fa-shopping-cart text-4xl text-blue-200"></i>
+                </div>
+            </div>
+            
+            <div class="performance-card rounded-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-pink-100 text-sm">Orders Placed</p>
+                        <p class="text-3xl font-bold" id="orders-placed">0</p>
+                        <p class="text-pink-200 text-xs" id="completion-rate">0% complete</p>
+                    </div>
+                    <i class="fas fa-chart-bar text-4xl text-pink-200"></i>
+                </div>
+            </div>
+            
+            <div class="analytics-card rounded-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-cyan-100 text-sm">Total Volume</p>
+                        <p class="text-3xl font-bold" id="total-volume">0</p>
+                        <p class="text-cyan-200 text-xs" id="volume-trend">+0 today</p>
+                    </div>
+                    <i class="fas fa-chart-pie text-4xl text-cyan-200"></i>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-500 text-sm">P&L</p>
+                        <p class="text-3xl font-bold text-green-600" id="total-pnl">₹0</p>
+                        <p class="text-gray-400 text-xs" id="pnl-trend">+0 today</p>
+                    </div>
+                    <i class="fas fa-chart-line text-4xl text-gray-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Metrics Row -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white rounded-lg p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-500 text-sm">Connected Brokers</p>
+                        <p class="text-2xl font-bold text-gray-800" id="brokers-count">0</p>
+                        <p class="text-green-500 text-xs" id="broker-status">All Connected</p>
+                    </div>
+                    <i class="fas fa-server text-3xl text-gray-400"></i>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-500 text-sm">Uptime</p>
+                        <p class="text-2xl font-bold text-gray-800" id="uptime">00:00:00</p>
+                        <p class="text-blue-500 text-xs" id="last-update">Just now</p>
+                    </div>
+                    <i class="fas fa-clock text-3xl text-gray-400"></i>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-500 text-sm">WebSocket</p>
+                        <p class="text-2xl font-bold text-gray-800" id="ws-connections">0</p>
+                        <p class="text-green-500 text-xs" id="ws-status">Connected</p>
+                    </div>
+                    <i class="fas fa-wifi text-3xl text-gray-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trading Interface -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Order Placement -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-bold text-gray-800 mb-6">
+                        <i class="fas fa-plus-circle text-blue-600 mr-2"></i>
+                        Place Order
+                    </h2>
+                    
+                    <form id="order-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Symbol</label>
+                            <input type="text" id="symbol" name="symbol" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="e.g., NIFTY24123400CE" required>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                                <select id="order-type" name="order_type" 
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="BUY">BUY</option>
+                                    <option value="SELL">SELL</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Exchange</label>
+                                <select id="exchange" name="exchange" 
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="NFO">NFO</option>
+                                    <option value="NSE">NSE</option>
+                                    <option value="MCX">MCX</option>
+                                    <option value="BFO">BFO</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
+                                <input type="number" id="quantity" name="quantity" 
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="50" required>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Price</label>
+                                <input type="number" id="price" name="price" step="0.05"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="100.00" required>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Remarks (Optional)</label>
+                            <input type="text" id="remarks" name="remarks" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                   placeholder="Order remarks">
+                        </div>
+                        
+                        <button type="submit" id="place-order-btn" 
+                                class="w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200">
+                            <i class="fas fa-paper-plane mr-2"></i>
+                            Place Order
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Orders List -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-xl font-bold text-gray-800">
+                            <i class="fas fa-list-alt text-blue-600 mr-2"></i>
+                            Orders
+                        </h2>
+                        <div class="flex space-x-2">
+                            <button id="refresh-orders" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition duration-200">
+                                <i class="fas fa-sync-alt mr-2"></i>
+                                Refresh
+                            </button>
+                            <button id="show-all-orders" class="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition duration-200">
+                                <i class="fas fa-eye mr-2"></i>
+                                All Orders
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="orders-container" class="space-y-4">
+                        <div class="text-center py-8">
+                            <div class="loading-spinner mx-auto mb-4"></div>
+                            <p class="text-gray-500">Loading orders...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Positions Section -->
+        <div class="mt-8">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold text-gray-800 mb-6">
+                    <i class="fas fa-chart-pie text-blue-600 mr-2"></i>
+                    Positions
+                </h2>
+                <div id="positions-container">
+                    <div class="text-center py-8">
+                        <div class="loading-spinner mx-auto mb-4"></div>
+                        <p class="text-gray-500">Loading positions...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+    <script>
+        class TradingApp {
+            constructor() {
+                this.ws = null;
+                this.isConnected = false;
+                this.orders = [];
+                this.positions = {};
+                this.brokers = {};
+                this.performance = {};
+                this.startTime = new Date();
+                
+                this.init();
+            }
+            
+            init() {
+                this.setupWebSocket();
+                this.setupEventListeners();
+                this.updateTime();
+                this.loadInitialData();
+                
+                // Update time every second
+                setInterval(() => this.updateTime(), 1000);
+                
+                // Auto-refresh data every 30 seconds
+                setInterval(() => this.loadInitialData(), 30000);
+            }
+            
+            setupWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.updateConnectionStatus(true);
+                    console.log('WebSocket connected');
+                };
+                
+                this.ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleWebSocketMessage(data);
+                    } catch (e) {
+                        console.log('WebSocket message:', event.data);
+                    }
+                };
+                
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.updateConnectionStatus(false);
+                    console.log('WebSocket disconnected');
+                    
+                    // Reconnect after 5 seconds
+                    setTimeout(() => this.setupWebSocket(), 5000);
+                };
+                
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+            }
+            
+            setupEventListeners() {
+                // Order form submission
+                document.getElementById('order-form').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.placeOrder();
+                });
+                
+                // Refresh orders button
+                document.getElementById('refresh-orders').addEventListener('click', () => {
+                    this.loadOrders();
+                });
+                
+                // Show all orders button
+                document.getElementById('show-all-orders').addEventListener('click', () => {
+                    this.loadOrders(true);
+                });
+            }
+            
+            async loadInitialData() {
+                await Promise.all([
+                    this.loadOrders(),
+                    this.loadPositions(),
+                    this.loadBrokers(),
+                    this.loadHealth(),
+                    this.loadPerformance()
+                ]);
+            }
+            
+            async loadOrders(showAll = false) {
+                try {
+                    const endpoint = showAll ? '/api/orders' : '/api/orders/active';
+                    const response = await fetch(endpoint);
+                    const data = await response.json();
+                    
+                    this.orders = data.orders || [];
+                    this.updateOrdersDisplay();
+                    this.updateOrderCounts();
+                } catch (error) {
+                    console.error('Error loading orders:', error);
+                    this.showToast('Error loading orders', 'error');
+                }
+            }
+            
+            async loadPositions() {
+                try {
+                    const response = await fetch('/api/positions');
+                    const data = await response.json();
+                    
+                    this.positions = data;
+                    this.updatePositionsDisplay();
+                    this.updatePnlDisplay();
+                } catch (error) {
+                    console.error('Error loading positions:', error);
+                }
+            }
+            
+            async loadBrokers() {
+                try {
+                    const response = await fetch('/api/brokers');
+                    const data = await response.json();
+                    
+                    this.brokers = data.brokers || {};
+                    this.updateBrokerCount();
+                } catch (error) {
+                    console.error('Error loading brokers:', error);
+                }
+            }
+            
+            async loadHealth() {
+                try {
+                    const response = await fetch('/api/health');
+                    const data = await response.json();
+                    
+                    if (data.status === 'healthy') {
+                        this.updateConnectionStatus(true);
+                        this.updateUptime(data.uptime);
+                        this.updateWebSocketStatus(data.websocket_connections);
+                    } else {
+                        this.updateConnectionStatus(false);
+                    }
+                } catch (error) {
+                    console.error('Error loading health:', error);
+                    this.updateConnectionStatus(false);
+                }
+            }
+            
+            async loadPerformance() {
+                try {
+                    const response = await fetch('/api/performance');
+                    const data = await response.json();
+                    
+                    this.performance = data.metrics;
+                    this.updatePerformanceDisplay();
+                } catch (error) {
+                    console.error('Error loading performance:', error);
+                }
+            }
+            
+            async placeOrder() {
+                const form = document.getElementById('order-form');
+                const formData = new FormData(form);
+                
+                const orderData = {
+                    symbol: formData.get('symbol'),
+                    order_type: formData.get('order_type'),
+                    quantity: parseInt(formData.get('quantity')),
+                    price: parseFloat(formData.get('price')),
+                    exchange: formData.get('exchange'),
+                    remarks: formData.get('remarks') || null
+                };
+                
+                const button = document.getElementById('place-order-btn');
+                const originalText = button.innerHTML;
+                button.innerHTML = '<div class="loading-spinner mr-2"></div>Placing Order...';
+                button.disabled = true;
+                
+                try {
+                    const response = await fetch('/api/orders', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(orderData)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.showToast('Order placed successfully!', 'success');
+                        form.reset();
+                        this.loadOrders();
+                    } else {
+                        this.showToast(`Order failed: ${result.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error placing order:', error);
+                    this.showToast('Error placing order', 'error');
+                } finally {
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                }
+            }
+            
+            async cancelOrder(orderId) {
+                try {
+                    const response = await fetch(`/api/orders/${orderId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.showToast('Order cancelled successfully!', 'success');
+                        this.loadOrders();
+                    } else {
+                        this.showToast(`Cancel failed: ${result.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error cancelling order:', error);
+                    this.showToast('Error cancelling order', 'error');
+                }
+            }
+            
+            handleWebSocketMessage(data) {
+                switch (data.type) {
+                    case 'order_placed':
+                    case 'order_modified':
+                    case 'order_cancelled':
+                        this.loadOrders();
+                        break;
+                    case 'order_update':
+                        this.updateOrderInList(data.data);
+                        break;
+                }
+            }
+            
+            updateOrdersDisplay() {
+                const container = document.getElementById('orders-container');
+                
+                if (this.orders.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-8">
+                            <i class="fas fa-inbox text-4xl text-gray-300 mb-4"></i>
+                            <p class="text-gray-500">No orders found</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                container.innerHTML = this.orders.map(order => this.createOrderCard(order)).join('');
+            }
+            
+            createOrderCard(order) {
+                const statusClass = `status-${order.status.toLowerCase()}`;
+                const orderTypeClass = order.order_type === 'BUY' ? 'text-green-600' : 'text-red-600';
+                
+                return `
+                    <div class="order-card bg-white border border-gray-200 rounded-lg p-4">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <h3 class="font-semibold text-gray-800">${order.symbol}</h3>
+                                <p class="text-sm text-gray-600">Order ID: ${order.order_id}</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="status-badge ${statusClass}">${order.status}</span>
+                                <p class="text-sm text-gray-600 mt-1">${new Date(order.created_at).toLocaleTimeString()}</p>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4 mb-3">
+                            <div>
+                                <p class="text-sm text-gray-500">Type</p>
+                                <p class="font-semibold ${orderTypeClass}">${order.order_type}</p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-gray-500">Quantity</p>
+                                <p class="font-semibold text-gray-800">${order.quantity}</p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-gray-500">Price</p>
+                                <p class="font-semibold text-gray-800">₹${order.price}</p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-gray-500">Value</p>
+                                <p class="font-semibold text-gray-800">₹${(order.quantity * order.price).toFixed(2)}</p>
+                            </div>
+                        </div>
+                        
+                        ${order.status === 'PENDING' || order.status === 'OPEN' ? `
+                            <div class="flex space-x-2">
+                                <button onclick="tradingApp.cancelOrder('${order.order_id}')" 
+                                        class="px-3 py-1 bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition duration-200 text-sm">
+                                    <i class="fas fa-times mr-1"></i>
+                                    Cancel
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            
+            updatePositionsDisplay() {
+                const container = document.getElementById('positions-container');
+                
+                if (!this.positions.broker_positions || Object.keys(this.positions.broker_positions).length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-8">
+                            <i class="fas fa-chart-pie text-4xl text-gray-300 mb-4"></i>
+                            <p class="text-gray-500">No positions found</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                let html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">';
+                
+                for (const [broker, data] of Object.entries(this.positions.broker_positions)) {
+                    html += `
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <h3 class="font-semibold text-gray-800 mb-2">${broker}</h3>
+                            <div class="space-y-2">
+                                <div class="flex justify-between">
+                                    <span class="text-sm text-gray-600">Positions:</span>
+                                    <span class="font-semibold">${data.positions_count}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-sm text-gray-600">P&L:</span>
+                                    <span class="font-semibold ${data.pnl >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                        ₹${data.pnl.toFixed(2)}
+                                    </span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-sm text-gray-600">MTM:</span>
+                                    <span class="font-semibold ${data.mtm >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                        ₹${data.mtm.toFixed(2)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                container.innerHTML = html;
+            }
+            
+            updateOrderCounts() {
+                const activeCount = this.orders.filter(order => 
+                    order.status === 'PENDING' || order.status === 'OPEN'
+                ).length;
+                
+                document.getElementById('active-orders-count').textContent = activeCount;
+                document.getElementById('total-orders-count').textContent = this.orders.length;
+            }
+            
+            updatePerformanceDisplay() {
+                if (!this.performance) return;
+                
+                // Update performance metrics
+                document.getElementById('orders-placed').textContent = this.performance.orders_placed || 0;
+                document.getElementById('total-volume').textContent = this.performance.total_volume || 0;
+                
+                // Calculate completion rate
+                const completionRate = this.performance.orders_placed > 0 ? 
+                    Math.round((this.performance.orders_completed / this.performance.orders_placed) * 100) : 0;
+                document.getElementById('completion-rate').textContent = `${completionRate}% complete`;
+                
+                // Update trends (simplified for now)
+                document.getElementById('orders-trend').textContent = `+${this.performance.orders_placed || 0} today`;
+                document.getElementById('volume-trend').textContent = `+${this.performance.total_volume || 0} today`;
+            }
+            
+            updateUptime(uptime) {
+                if (uptime) {
+                    document.getElementById('uptime').textContent = uptime;
+                }
+            }
+            
+            updateWebSocketStatus(connections) {
+                document.getElementById('ws-connections').textContent = connections || 0;
+                document.getElementById('ws-status').textContent = connections > 0 ? 'Connected' : 'Disconnected';
+            }
+            
+            updateBrokerCount() {
+                const connectedCount = Object.values(this.brokers).filter(status => status).length;
+                document.getElementById('brokers-count').textContent = connectedCount;
+            }
+            
+            updatePnlDisplay() {
+                const totalPnl = this.positions.total_pnl || 0;
+                const pnlElement = document.getElementById('total-pnl');
+                pnlElement.textContent = `₹${totalPnl.toFixed(2)}`;
+                pnlElement.className = `text-3xl font-bold ${totalPnl >= 0 ? 'text-green-600' : 'text-red-600'}`;
+            }
+            
+            updateConnectionStatus(connected) {
+                const statusElement = document.getElementById('connection-status');
+                if (connected) {
+                    statusElement.className = 'w-3 h-3 bg-green-500 rounded-full';
+                } else {
+                    statusElement.className = 'w-3 h-3 bg-red-500 rounded-full pulse';
+                }
+            }
+            
+            updateTime() {
+                const now = new Date();
+                document.getElementById('current-time').textContent = now.toLocaleTimeString();
+            }
+            
+            showToast(message, type = 'info') {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                
+                const bgColor = {
+                    'success': 'bg-green-500',
+                    'error': 'bg-red-500',
+                    'warning': 'bg-yellow-500',
+                    'info': 'bg-blue-500'
+                }[type] || 'bg-blue-500';
+                
+                toast.className = `${bgColor} text-white px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
+                toast.innerHTML = `
+                    <div class="flex items-center">
+                        <i class="fas fa-${type === 'success' ? 'check' : type === 'error' ? 'times' : 'info'}-circle mr-2"></i>
+                        <span>${message}</span>
+                    </div>
+                `;
+                
+                container.appendChild(toast);
+                
+                // Animate in
+                setTimeout(() => {
+                    toast.classList.remove('translate-x-full');
+                }, 100);
+                
+                // Remove after 5 seconds
+                setTimeout(() => {
+                    toast.classList.add('translate-x-full');
+                    setTimeout(() => {
+                        if (toast.parentNode) {
+                            toast.parentNode.removeChild(toast);
+                        }
+                    }, 300);
+                }, 5000);
+            }
+        }
+        
+        // Initialize the app
+        const tradingApp = new TradingApp();
+    </script>
+</body>
+</html>
